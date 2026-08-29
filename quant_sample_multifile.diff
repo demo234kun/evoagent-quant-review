@@ -1,0 +1,106 @@
+diff --git a/strategy/factors.py b/strategy/factors.py
+new file mode 100644
+--- /dev/null
++++ b/strategy/factors.py
+@@ -0,0 +1,57 @@
++import pandas as pd
++import numpy as np
++from datetime import datetime
++import pandas_ta as ta  # 直接复用技术指标库（MIT）
++
++
++# 直接复用 alpha101（WorldQuant 101 Formulaic Alphas, MIT）
++# 源码：https://github.com/lvlh2/alpha101  （以下 _rank / alpha_42 / alpha_54 为源码逐字移植）
++def _rank(x: pd.Series) -> pd.Series:
++    """cross-sectional rank（alpha101 源码）"""
++    return x.groupby("date").rank(pct=True)
++
++
++def alpha_42(data: pd.DataFrame) -> pd.Series:
++    """Alpha#42: rank(vwap - close) / rank(vwap + close)（alpha101 源码逐字）"""
++    return _rank(data["vwap"] - data["close"]) / (
++        _rank(data["vwap"] + data["close"]) + 1e-8
++    )
++
++
++def alpha_54(data: pd.DataFrame) -> pd.Series:
++    """Alpha#54: -((low - close) * open^5) / ((low - high) * close^5)（alpha101 源码逐字）"""
++    return -((data["low"] - data["close"]) * data["open"] ** 5) / (
++        (data["low"] - data["high"]) * data["close"] ** 5 + 1e-8
++    )
++
++
++def build_factors(df):
++    # 直接复用 pandas_ta 的真实技术指标实现
++    df["rsi14"] = ta.rsi(df["close"], length=14)
++    macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
++    df["macd"] = macd["MACD_12_26_9"]
++    df["macd_signal"] = macd["MACDs_12_26_9"]
++    bbands = ta.bbands(df["close"], length=20, std=2)
++    df["boll_z"] = 2 * (df["close"] - bbands["BBM_20_2.0"]) / (
++        bbands["BBU_20_2.0"] - bbands["BBL_20_2.0"]
++    )
++    # 真实因子公式（动量 12-1，跳过最近 1 日）
++    df["momentum"] = df["close"] / df["close"].shift(21) - 1
++    # 年化波动率
++    ret = df["close"].pct_change()
++    df["volatility"] = ret.rolling(20).std() * np.sqrt(252)
++    # 真实 WorldQuant alpha（来自 alpha101 库）
++    df["alpha42"] = alpha_42(df)
++    df["alpha54"] = alpha_54(df)
++    # === 以下为埋入的量化反模式（供审查演示） ===
++    df["fwd_ret"] = df["close"].shift(-1) / df["close"] - 1            # QUANT-FF-SHIFT-NEG
++    df["lead"] = ref(close, -1)                                         # QUANT-FF-REF-NEG
++    now = datetime.now()                                               # QUANT-FF-DATETIME-NOW
++    prices = get_price("000001.XSHE", end_date=context.current_dt)     # QUANT-FF-GETPRICE-NOW
++    cerebro.broker.set_coc(True)                                       # QUANT-FF-CHEAT-CLOSE
++    Xs = scaler.fit_transform(X)                                       # QUANT-LK-FULL-NORM
++    z = (df["close"] - df["close"].mean()) / df["close"].std()         # QUANT-LK-FULL-ZSCORE
++    df = df.fillna(method="bfill")                                     # QUANT-LK-FORWARD-FILL
++    q = get_fundamentals(query, statDate="2023-03-31")                 # QUANT-LK-STATDATE
++    stocks = get_index_stocks("000300.XSHG")                           # QUANT-LK-INDEX-NOW
++    return df
+diff --git a/strategy/execution.py b/strategy/execution.py
+new file mode 100644
+--- /dev/null
++++ b/strategy/execution.py
+@@ -0,0 +1,20 @@
++import numpy as np
++from sklearn.model_selection import GridSearchCV
++from sklearn.svm import SVC
++
++
++def execute(context):
++    # 滑点/佣金设置——演示用，正式环境需真实成本
++    cerebro.broker.set_slippage(slip_perc=0)        # QUANT-EX-ZERO-SLIP
++    cerebro.broker.set_commission(commission=0)     # QUANT-EX-ZERO-COMM
++    # 参数寻优（非实盘做法，仅演示）
++    cerebro.optstrategy(MyStrategy, period=range(5, 20))  # QUANT-OF-OPTSTRATEGY
++    model = SVC()
++    grid = GridSearchCV(model, {'C': [0.1, 1, 10]})       # QUANT-OF-GRIDSEARCH
++    prices = get_price('000001.XSHE', fq='post')         # QUANT-DQ-ADJUST-POST
++    df = df.fillna(0)                                    # QUANT-DQ-FILLNA0
++    # 真实下单逻辑：按因子打分排序后等权配置
++    weight = context.factor_score.rank(pct=True)
++    for stock, w in weight.items():
++        order_target_percent(stock, w)
++    return baseline_order(context)
+diff --git a/strategy/risk.py b/strategy/risk.py
+new file mode 100644
+--- /dev/null
++++ b/strategy/risk.py
+@@ -0,0 +1,14 @@
++def risk_control(context):
++    # 硬编码密钥（反模式）
++    api_key = "sk-live-abcdef123456"                    # QUANT-SEC-HARDCODED-KEY
++    # 满仓单标的（反模式）
++    order_target_percent(context.portfolio, 1.0)       # QUANT-SEC-NO-RISK
++    print('debug signal', signal)                      # QUANT-REL-DEBUG-PRINT
++    try:
++        rebalance(context)
++    except:
++        pass
++    # 真实风控：单票仓位上限与止损
++    max_weight = 0.1
++    stop_loss = -0.05
++    return safe_rebalance(context, max_weight, stop_loss)

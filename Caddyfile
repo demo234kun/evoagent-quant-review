@@ -1,0 +1,8 @@
+# 暂无域名：Caddy 自动签发自签名证书，浏览器会提示“不安全”，点“继续/高级→继续”即可。
+# 绑定域名后：把下面 ":443" 改成你的域名（如 review.example.com），并把 "tls internal" 改成 "tls you@email.com"，
+# 然后改 DNS 的 A 记录指向本机 IP，最后 `docker compose -f docker-compose.prod.yml restart caddy`。
+
+:443 {
+    tls internal
+    reverse_proxy evoagent:8080
+}

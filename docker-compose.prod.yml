@@ -1,0 +1,97 @@
+# 生产部署编排：postgres + redis + evoagent（由 Caddy 反代并终止 TLS）
+# 用法：
+#   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+# 镜像来自 Docker Hub（先在本机用 push_image.ps1 推送）。
+# evoagent 不对外暴露 8080，只通过内部网络给 Caddy 访问。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: evoagent
+      POSTGRES_USER: evoagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-strong}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evoagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  evoagent:
+    image: ${EVOAGENT_IMAGE:-yourdockerhubuser/coding-evoagent:latest}
+    environment:
+      EVOAGENT_HOST: 0.0.0.0
+      EVOAGENT_PORT: 8080
+      EVOAGENT_DATABASE_URL: postgresql://evoagent:${POSTGRES_PASSWORD:-change-me-strong}@postgres:5432/evoagent
+      EVOAGENT_REDIS_URL: redis://redis:6379/0
+      EVOAGENT_ASYNC_WORKERS: 4
+      EVOAGENT_DB_PATH: /data/evoagent.db
+      EVOAGENT_SKILLS_DIR: /app/skills
+      EVOAGENT_AUTH_REQUIRED: "true"
+      EVOAGENT_AUTH_SECRET: ${EVOAGENT_AUTH_SECRET}
+      EVOAGENT_BOOTSTRAP_ADMIN_USERNAME: ${EVOAGENT_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD: ${EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD}
+      # 高级模式：hybrid / agentic 需要配置 LLM provider
+      EVOAGENT_LLM_PROVIDER: ${EVOAGENT_LLM_PROVIDER:-deepseek}
+      EVOAGENT_DEEPSEEK_API_KEY: ${EVOAGENT_DEEPSEEK_API_KEY:-}
+      EVOAGENT_LLM_BASE_URL: ${EVOAGENT_LLM_BASE_URL:-}
+      EVOAGENT_LLM_API_KEY: ${EVOAGENT_LLM_API_KEY:-}
+      EVOAGENT_LLM_MODEL: ${EVOAGENT_LLM_MODEL:-}
+      EVOAGENT_DEFAULT_RUN_MODE: ${EVOAGENT_DEFAULT_RUN_MODE:-hybrid}
+    env_file:
+      - path: .env.prod
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - evoagent_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - evoagent
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  evoagent_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,8 @@
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "Detects quantitative-trading code smells: blocking sleep, interactive debug plots and unsafe dynamic execution in added production code",
+  "entrypoint": "skill.py",
+  "sha256": "2c0d70f8e1a13143d15218447aad505a7a40ac1557449c5d79688bfa32e15af0",
+  "permissions": []
+}
